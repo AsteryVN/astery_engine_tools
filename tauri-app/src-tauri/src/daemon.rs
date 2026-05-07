@@ -92,10 +92,31 @@ pub fn spawn_daemon_once<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
         return Ok(());
     }
 
+    // The daemon's default data dir on Linux ($XDG_DATA_HOME/astery-engine-tools)
+    // is NOT the same as Tauri's app_local_data_dir on Linux
+    // ($XDG_DATA_HOME/com.asteryvn.engine-tools, derived from the bundle
+    // identifier). Without an explicit --data-dir, the daemon writes
+    // ipc.port/ipc.token to one tree and the shell reads them from another,
+    // and the renderer reports "Daemon not running" forever.
+    let data_dir = app
+        .path()
+        .app_local_data_dir()
+        .context("resolve app_local_data_dir for sidecar --data-dir")?;
+    if let Err(e) = fs::create_dir_all(&data_dir) {
+        return Err(anyhow!(
+            "create data dir {}: {e}",
+            data_dir.display()
+        ));
+    }
+    let data_dir_str = data_dir
+        .to_str()
+        .ok_or_else(|| anyhow!("non-utf8 data dir path: {}", data_dir.display()))?;
+
     let sidecar = app
         .shell()
         .sidecar("engine-toold")
-        .map_err(|e| anyhow!("locate sidecar engine-toold: {e}"))?;
+        .map_err(|e| anyhow!("locate sidecar engine-toold: {e}"))?
+        .args(["--data-dir", data_dir_str]);
     let (mut _rx, child) = sidecar
         .spawn()
         .map_err(|e| anyhow!("spawn engine-toold: {e}"))?;

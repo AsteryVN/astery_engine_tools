@@ -337,6 +337,82 @@ func TestSSEQueryToken_DoesNotLeakToOtherPaths(t *testing.T) {
 	}
 }
 
+// ─── CORS preflight regression (root cause of "Load failed" in v0.2.0-rc3
+// AppImage) ──────────────────────────────────────────────────────────────
+//
+// Webkit/Blink send a CORS preflight OPTIONS for any cross-origin fetch
+// that carries a non-simple header (Authorization). The renderer page
+// origin (tauri://localhost) is cross-origin to http://127.0.0.1:<port>,
+// so the preflight ALWAYS fires. Before the fix, middleware demanded a
+// bearer on the preflight (which preflights never carry) → 401 → no CORS
+// headers → fetch() rejects with "Load failed" before ever sending the
+// real GET. Regression coverage:
+//   1. Preflight from allowlisted origin returns 204 with the negotiated
+//      Access-Control-Allow-* headers.
+//   2. Preflight from a disallowed origin still returns 403.
+//   3. Authenticated GET responses include Access-Control-Allow-Origin
+//      echoing the validated origin.
+
+func TestCORSPreflight(t *testing.T) {
+	_, _, srv := newTestServer(t)
+	cases := []struct {
+		name           string
+		origin         string
+		wantStatus     int
+		wantAllowOrigin string
+	}{
+		{"tauri scheme", "tauri://localhost", http.StatusNoContent, "tauri://localhost"},
+		{"https tauri.localhost", "https://tauri.localhost", http.StatusNoContent, "https://tauri.localhost"},
+		{"evil cross-site", "https://evil.example.com", http.StatusForbidden, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodOptions, srv.URL+"/v1/status", nil)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			req.Header.Set("Origin", tc.origin)
+			req.Header.Set("Access-Control-Request-Method", "GET")
+			req.Header.Set("Access-Control-Request-Headers", "authorization,accept")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("send: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tc.wantStatus {
+				t.Fatalf("origin=%q: want %d, got %d", tc.origin, tc.wantStatus, resp.StatusCode)
+			}
+			if got := resp.Header.Get("Access-Control-Allow-Origin"); got != tc.wantAllowOrigin {
+				t.Fatalf("origin=%q: ACAO want %q, got %q", tc.origin, tc.wantAllowOrigin, got)
+			}
+			if tc.wantStatus == http.StatusNoContent {
+				if got := resp.Header.Get("Access-Control-Allow-Headers"); got == "" {
+					t.Fatalf("preflight missing Access-Control-Allow-Headers")
+				}
+				if got := resp.Header.Get("Access-Control-Allow-Methods"); got == "" {
+					t.Fatalf("preflight missing Access-Control-Allow-Methods")
+				}
+			}
+		})
+	}
+}
+
+func TestCORSResponseHeadersOnAuthedGET(t *testing.T) {
+	_, _, srv := newTestServer(t)
+	resp := authedRequest(t, http.MethodGet, srv.URL+"/v1/status", "",
+		map[string]string{"Origin": "tauri://localhost"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "tauri://localhost" {
+		t.Fatalf("ACAO want tauri://localhost, got %q", got)
+	}
+	if got := resp.Header.Get("Vary"); got != "Origin" {
+		t.Fatalf("Vary want Origin, got %q", got)
+	}
+}
+
 // ─── Origin middleware regression (test #2) ──────────────────────────────
 
 func TestOriginMiddleware(t *testing.T) {

@@ -7,7 +7,13 @@ import { Spinner } from '../components/Spinner';
 import { ipc, type PairResult } from '../lib/ipc';
 import { IpcError } from '../lib/types';
 
-const CODE_PATTERN = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+// Mirrors the cloud's display-code generator
+// (internal/modules/device/service.go::generateDisplayCode + model.go
+// constants displayCodeAlphabet/displayCodeGroups/displayCodeGroupSize).
+// Crockford-ish alphabet excludes 0/1/I/O and the format is two 3-char
+// groups separated by a hyphen — e.g. "5CD-GZF". Keep this regex in sync
+// if the cloud constants change.
+const CODE_PATTERN = /^[A-HJ-NP-Z2-9]{3}-[A-HJ-NP-Z2-9]{3}$/;
 
 export function Pairing(): JSX.Element {
   const navigate = useNavigate();
@@ -21,7 +27,7 @@ export function Pairing(): JSX.Element {
     e.preventDefault();
     const normalized = code.trim().toUpperCase();
     if (!CODE_PATTERN.test(normalized)) {
-      setError('Code must look like ABCD-1234.');
+      setError('Code must look like ABC-123 (3 characters, dash, 3 characters).');
       setErrorKind('format');
       return;
     }
@@ -76,7 +82,8 @@ export function Pairing(): JSX.Element {
               autoComplete="off"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="ABCD-1234"
+              placeholder="ABC-123"
+              maxLength={7}
               className={[
                 'mt-1 block w-full rounded-md border px-2.5 py-1.5 font-mono text-sm uppercase tracking-widest',
                 'focus:outline-none focus:ring-2 focus:ring-zinc-400',
