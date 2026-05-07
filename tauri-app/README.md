@@ -20,12 +20,21 @@ tauri-app/
 ## Development
 
 ```bash
-# 1. Run the daemon manually (no sidecar in dev mode):
+# 1. Point the daemon at your local Astery Engine backend.
+#    The default in v0.2.0+ is the production cloud (engine.asteryvn.com)
+#    so released AppImages work out of the box. Devs override here:
+export ENGINE_CLOUD_URL=http://localhost:8080/api
+
+# 2. Run the daemon manually (no sidecar in dev mode):
 make run                 # from repo root → daemon on 127.0.0.1:<random>
 
-# 2. In another terminal:
+# 3. In another terminal:
 make tauri-dev           # opens the desktop window + Vite HMR on :1420
 ```
+
+When `pnpm tauri dev` (or `make tauri-dev`) spawns the bundled sidecar,
+it inherits the parent shell's environment — so `ENGINE_CLOUD_URL` set
+in step 1 propagates automatically.
 
 The renderer reads `<data-dir>/ipc.token` and `<data-dir>/ipc.port` via
 `invoke('ipc_token')` / `invoke('ipc_port')` — never via the JS `fs` plugin.
