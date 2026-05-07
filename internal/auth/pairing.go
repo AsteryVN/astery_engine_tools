@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,12 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// ErrUnauthorized is returned by Exchange / Refresh when the cloud rejects
+// the request with HTTP 401 (e.g. invalid pairing display code, expired
+// refresh token). Callers should compare with errors.Is — never string-match
+// the wrapped error message, which is unstable.
+var ErrUnauthorized = errors.New("auth: cloud rejected credentials (401)")
 
 // PairingClient performs the pairing handshake against the cloud control
 // plane. Returns a SessionBundle the daemon then hands to the keystore.
@@ -84,6 +91,9 @@ func (c *PairingClient) Exchange(ctx context.Context, req ExchangeRequest) (*Exc
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("exchange: %w (body: %s)", ErrUnauthorized, string(body))
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("exchange: status %d: %s", resp.StatusCode, string(body))
 	}

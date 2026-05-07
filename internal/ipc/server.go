@@ -9,9 +9,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,12 +32,15 @@ type Server struct {
 
 // Deps bundles read-only handles the IPC server exposes.
 type Deps struct {
-	Store     *jobqueue.Store
-	Resources *resources.Manager
-	Pause     func()
-	Resume    func()
-	Paused    func() bool
+	Store      *jobqueue.Store
+	Resources  *resources.Manager
+	Pause      func()
+	Resume     func()
+	Paused     func() bool
 	AppVersion string
+	// Pair is optional — when nil POST /v1/pair returns 503 (pairing not
+	// configured). Wired by main.go when keystore + cloud client exist.
+	Pair *PairDeps
 }
 
 // Listen binds to 127.0.0.1:listen (e.g. ":0" for a random port). Writes
@@ -53,7 +58,7 @@ func Listen(listen, token, portFile string, deps Deps) (*Server, error) {
 	}
 	port := l.Addr().(*net.TCPAddr).Port
 	if portFile != "" {
-		if err := os.WriteFile(portFile, []byte(fmt.Sprintf("%d", port)), 0o600); err != nil {
+		if err := os.WriteFile(portFile, []byte(strconv.Itoa(port)), 0o600); err != nil {
 			_ = l.Close()
 			return nil, fmt.Errorf("write port file: %w", err)
 		}
@@ -62,7 +67,7 @@ func Listen(listen, token, portFile string, deps Deps) (*Server, error) {
 	mux := http.NewServeMux()
 	s.routes(mux)
 	s.httpServer = &http.Server{
-		Handler:           s.middleware(mux),
+		Handler:           sseQueryAuthShim(s.middleware(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      0, // SSE-friendly; rule streaming-write-timeout
@@ -89,6 +94,11 @@ func (s *Server) Serve(ctx context.Context) error {
 // Addr returns the bound TCP address.
 func (s *Server) Addr() string { return s.listener.Addr().String() }
 
+// logger returns the configured default slog logger. Using this accessor
+// (instead of slog.Default() directly at call sites) keeps handler code
+// agnostic of the global and lets future tests inject a per-server logger.
+func (s *Server) logger() *slog.Logger { return slog.Default() }
+
 // ─── routes ──────────────────────────────────────────────────────────────
 
 func (s *Server) routes(mux *http.ServeMux) {
@@ -97,6 +107,11 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/pause", s.handlePause)
 	mux.HandleFunc("/v1/resume", s.handleResume)
 	mux.HandleFunc("/v1/capabilities", s.handleCapabilities)
+	// Per-job routes — handleJobByID dispatches GET /v1/jobs/:id and
+	// POST /v1/jobs/:id/cancel under one mux entry.
+	mux.HandleFunc("/v1/jobs/", s.handleJobByID)
+	mux.HandleFunc("/v1/pair", s.handlePair)
+	mux.HandleFunc("/v1/logs/stream", s.handleLogsStream)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -145,12 +160,51 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 
 // ─── middleware: bearer auth + Origin reject ────────────────────────────
 
+// tauriOriginAllowlist is the narrow set of Origin header values the Tauri
+// renderer is permitted to attach. macOS/Linux send `tauri://localhost`,
+// Windows sends `https://tauri.localhost`. Anything else (including
+// localhost cloud frontends like http://localhost:3000) is rejected — the
+// loopback IPC must NEVER answer browser-tab requests.
+//
+// Decision rationale (regression test #2): we keep reject-all as the
+// default policy and only whitelist these two exact scheme/host pairs. If a
+// future Tauri minor version changes the host, the test suite will catch
+// it before release.
+var tauriOriginAllowlist = map[string]struct{}{
+	"tauri://localhost":       {},
+	"https://tauri.localhost": {},
+}
+
+// sseQueryAuthShim rewrites a ?token=… query param into an Authorization
+// header for /v1/logs/stream only. The browser EventSource API has no way
+// to set custom request headers, so SSE clients must pass the bearer via
+// the URL. We promote it to a header here so the regular middleware does
+// the actual auth check, then strip it from the URL so it never reaches
+// the handler or any future access log. Loopback bind + per-boot token
+// rotation bound the exposure.
+func sseQueryAuthShim(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/logs/stream" && r.Header.Get("Authorization") == "" {
+			q := r.URL.Query()
+			if t := q.Get("token"); t != "" {
+				r.Header.Set("Authorization", "Bearer "+t)
+				q.Del("token")
+				r.URL.RawQuery = q.Encode()
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Anti-CSRF: reject any cross-origin request on the loopback server.
+		// Anti-CSRF: reject any cross-origin request on the loopback
+		// server. Tauri renderer Origins are explicitly whitelisted.
 		if origin := r.Header.Get("Origin"); origin != "" && !s.allowOrigin {
-			writeErr(w, http.StatusForbidden, "origin not allowed")
-			return
+			if _, ok := tauriOriginAllowlist[origin]; !ok {
+				writeErr(w, http.StatusForbidden, "origin not allowed")
+				return
+			}
 		}
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if strings.TrimSpace(got) != s.token {

@@ -23,6 +23,13 @@ dist/
 target/
 src-tauri/target/
 .next/
+tauri-app/node_modules/
+tauri-app/dist/
+tauri-app/src-tauri/target/
+tauri-app/src-tauri/binaries/engine-toold*
+!tauri-app/src-tauri/binaries/.gitkeep
+tauri-app/tsconfig.tsbuildinfo
+tauri-app/.vite/
 
 # Local data
 data/

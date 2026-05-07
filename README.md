@@ -41,6 +41,29 @@ make test
 make run         # foreground, --headless
 ```
 
+## Desktop shell (v0.2.x)
+
+The optional Tauri 2 shell lives at [`tauri-app/`](tauri-app/README.md). Two
+runtime topologies are supported:
+
+- **Tauri spawns daemon** (default consumer install): `cargo tauri build`
+  bundles the daemon as a sidecar; the shell starts it on launch and kills
+  it on `WindowEvent::CloseRequested`.
+- **Daemon spawns shell** (`engine-toold --with-ui`): for service-mode
+  deploys where the daemon is the long-lived parent. Daemon `exec`s the
+  side-by-side `astery-engine-tools-ui` binary; either side detects
+  pre-existing instances via the IPC port file.
+
+```bash
+make tauri-dev    # local dev: daemon (make run) + Tauri window
+make tauri-build  # platform installer (.dmg / .msi / .AppImage)
+make tauri-test   # pnpm typecheck + vitest
+```
+
+v0.2.x installers are **unsigned** — macOS Gatekeeper and Windows SmartScreen
+will warn on first launch. Code signing is a follow-up. See
+[`tauri-app/README.md`](tauri-app/README.md#unsigned-artifact-warnings).
+
 ## Releases
 
 Tagged releases (`v*`) auto-publish 6 daemon archives + `SHA256SUMS` + `release-manifest.json` to the GitHub release. See [`docs/RELEASE.md`](docs/RELEASE.md) for the runbook (tag flow, hotfix, rollback, signing-key rotation, arm64 fallback).

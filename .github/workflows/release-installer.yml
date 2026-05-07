@@ -1,0 +1,184 @@
+name: release-installer
+
+# Release pipeline for the Tauri shell installers (v0.2.x+). Sibling to
+# release.yml — that one ships headless engine-toold archives, this one
+# ships native installers (.dmg/.msi/.AppImage) that bundle the daemon as
+# a Tauri 2 sidecar. Tag-triggered only; PRs run the lighter
+# release-installer-pr-guard job (see release-installer-pr.yml).
+#
+# Filename convention (mirrored by the cloud manifest endpoint):
+#   astery-engine-tools_${version}_${os}_${arch}_installer.${ext}
+# os ∈ {darwin, windows, linux}, arch ∈ {x64, arm64}, ext ∈ {dmg, msi, AppImage}.
+#
+# Artifacts are unsigned in v0.2.x. Apple notarization (APPLE_TEAM_ID +
+# APPLE_API_KEY_*) and Windows Authenticode (WINDOWS_PFX_BASE64) are a
+# follow-up — see docs/RELEASE.md §code-signing.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to publish (must already exist, e.g. v0.2.0)"
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-installer-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: installer ${{ matrix.os }}_${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: darwin,  arch: x64,   runner: macos-13,        rust_target: x86_64-apple-darwin,        go_goos: darwin,  go_goarch: amd64, ext: dmg }
+          - { os: darwin,  arch: arm64, runner: macos-14,        rust_target: aarch64-apple-darwin,       go_goos: darwin,  go_goarch: arm64, ext: dmg }
+          - { os: windows, arch: x64,   runner: windows-latest,  rust_target: x86_64-pc-windows-msvc,     go_goos: windows, go_goarch: amd64, ext: msi }
+          - { os: linux,   arch: x64,   runner: ubuntu-24.04,    rust_target: x86_64-unknown-linux-gnu,   go_goos: linux,   go_goarch: amd64, ext: AppImage }
+          - { os: linux,   arch: arm64, runner: ubuntu-24.04-arm, rust_target: aarch64-unknown-linux-gnu, go_goos: linux,   go_goarch: arm64, ext: AppImage }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+
+      - name: Build engine-toold sidecar binary
+        shell: bash
+        env:
+          GOOS: ${{ matrix.go_goos }}
+          GOARCH: ${{ matrix.go_goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          version="${{ steps.ver.outputs.version }}"
+          mkdir -p tauri-app/src-tauri/binaries
+          out="tauri-app/src-tauri/binaries/engine-toold-${{ matrix.rust_target }}"
+          if [ "${{ matrix.os }}" = "windows" ]; then out="${out}.exe"; fi
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${version}" \
+            -o "${out}" ./cmd/engine-toold
+          ls -lh "${out}"
+
+      - name: Assert externalBin staged
+        shell: bash
+        run: |
+          target="${{ matrix.rust_target }}"
+          if [ "${{ matrix.os }}" = "windows" ]; then suffix=".exe"; else suffix=""; fi
+          test -f "tauri-app/src-tauri/binaries/engine-toold-${target}${suffix}" \
+            || (echo "::error::sidecar binary missing for ${target}" && exit 1)
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Linux build deps
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev pkg-config build-essential
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: tauri-app/pnpm-lock.yaml
+
+      - name: pnpm install
+        working-directory: tauri-app
+        run: pnpm install --frozen-lockfile
+
+      - name: tauri build
+        working-directory: tauri-app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+        run: pnpm tauri build --target ${{ matrix.rust_target }}
+
+      - name: Stage + rename installer
+        id: stage
+        shell: bash
+        run: |
+          version="${{ steps.ver.outputs.version }}"
+          os="${{ matrix.os }}"
+          arch="${{ matrix.arch }}"
+          ext="${{ matrix.ext }}"
+          target="${{ matrix.rust_target }}"
+          out_dir="dist-installer"
+          mkdir -p "$out_dir"
+          name="astery-engine-tools_${version}_${os}_${arch}_installer.${ext}"
+          case "$ext" in
+            dmg)      src="tauri-app/src-tauri/target/${target}/release/bundle/dmg" ;;
+            msi)      src="tauri-app/src-tauri/target/${target}/release/bundle/msi" ;;
+            AppImage) src="tauri-app/src-tauri/target/${target}/release/bundle/appimage" ;;
+            *) echo "::error::unknown ext $ext" && exit 1 ;;
+          esac
+          found="$(find "$src" -maxdepth 1 -type f -name "*.${ext}" | head -n1)"
+          test -n "$found" || (echo "::error::no $ext produced under $src" && exit 1)
+          cp "$found" "$out_dir/$name"
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd "$out_dir" && sha256sum "$name" > "${name}.sha256")
+          else
+            (cd "$out_dir" && shasum -a 256 "$name" > "${name}.sha256")
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "dir=$out_dir" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ steps.stage.outputs.dir }}/${{ steps.stage.outputs.name }}*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: publish installers
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || inputs.version != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-installer
+          pattern: installer-*
+          merge-multiple: true
+
+      - name: Aggregate SHA256SUMS
+        working-directory: dist-installer
+        run: |
+          : > SHA256SUMS-installers
+          for f in *.sha256; do
+            cat "$f" >> SHA256SUMS-installers
+          done
+          cat SHA256SUMS-installers
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ inputs.version != '' && inputs.version || github.ref_name }}"
+          gh release upload "$tag" dist-installer/*.dmg dist-installer/*.msi dist-installer/*.AppImage dist-installer/SHA256SUMS-installers --clobber

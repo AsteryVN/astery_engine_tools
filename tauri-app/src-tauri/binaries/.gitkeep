@@ -1,0 +1,5 @@
+# Tauri 2 sidecar binaries land here at release time. The daemon binary is
+# named `engine-toold-<rust-target-triple>` (e.g. `engine-toold-x86_64-apple-darwin`)
+# and copied in by the release-installer.yml workflow before `cargo tauri build`.
+# Local `cargo tauri dev` does NOT require a sidecar; the daemon is started
+# manually (`make run`).

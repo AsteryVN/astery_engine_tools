@@ -21,10 +21,29 @@ type Attrs struct {
 	DeviceID       string // empty until paired
 }
 
+// defaultHub is the process-wide LogHub installed by Setup. SSE consumers
+// (e.g. the IPC /v1/logs/stream handler) Subscribe through Hub().
+var defaultHub *hub
+
+// Hub returns the process-wide LogHub. Returns nil if Setup hasn't run yet
+// (caller should treat that as "no streaming available" rather than panic).
+func Hub() LogHub {
+	if defaultHub == nil {
+		return nil
+	}
+	return defaultHub
+}
+
 // Setup configures the global slog default handler. Returns the configured
 // logger so the caller can pass it into modules that prefer explicit DI.
+//
+// In addition to the standard JSON handler, Setup installs a fan-out
+// handler that publishes every record into a process-wide [LogHub] for SSE
+// subscribers. The stderr/stdout output is unchanged.
 func Setup(level slog.Level, a Attrs) *slog.Logger {
 	base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+	defaultHub = newHub()
+	fan := newFanoutHandler(base, defaultHub)
 	attrs := []slog.Attr{
 		slog.String("service", "engine-toold"),
 		slog.String("app_version", a.AppVersion),
@@ -36,7 +55,7 @@ func Setup(level slog.Level, a Attrs) *slog.Logger {
 	if a.DeviceID != "" {
 		attrs = append(attrs, slog.String("device_id", a.DeviceID))
 	}
-	logger := slog.New(base.WithAttrs(attrs))
+	logger := slog.New(fan.WithAttrs(attrs))
 	slog.SetDefault(logger)
 	return logger
 }

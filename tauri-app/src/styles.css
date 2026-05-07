@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Light-only baseline. Hairline borders + soft tints (surface-system). */
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+@layer components {
+  .surface-card {
+    @apply rounded-lg border border-zinc-200/60 bg-white shadow-hairline;
+  }
+  .surface-panel {
+    @apply rounded-lg border border-zinc-200/60 bg-zinc-50/60;
+  }
+  .kpi-label {
+    @apply text-xs uppercase tracking-wider text-zinc-500;
+  }
+  .num {
+    @apply font-mono tabular-nums;
+  }
+}

@@ -8,7 +8,7 @@ BIN_DIR    ?= bin
 DAEMON     ?= engine-toold
 VERSION    ?= 0.1.0-dev
 
-.PHONY: build test run clean lint tauri-dev tauri-build
+.PHONY: build test run clean lint tauri-dev tauri-build tauri-bundle tauri-test
 
 build:
 	@mkdir -p $(BIN_DIR)
@@ -28,7 +28,13 @@ clean:
 	rm -rf $(BIN_DIR) data/
 
 tauri-dev:
-	cd tauri-app && cargo tauri dev
+	cd tauri-app && pnpm install --frozen-lockfile && cargo tauri dev
 
 tauri-build:
-	cd tauri-app && cargo tauri build
+	cd tauri-app && pnpm install --frozen-lockfile && cargo tauri build
+
+tauri-bundle:
+	cd tauri-app && pnpm install --frozen-lockfile && pnpm build && cargo tauri build --no-bundle && cargo tauri bundle
+
+tauri-test:
+	cd tauri-app && pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
