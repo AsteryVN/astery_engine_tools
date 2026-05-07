@@ -1,0 +1,42 @@
+# Go
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.txt
+go.work
+go.work.sum
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Tauri / Node
+node_modules/
+dist/
+target/
+src-tauri/target/
+.next/
+
+# Local data
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+ipc.token
+secrets/
+keystore.age
+
+# OS
+Thumbs.db
