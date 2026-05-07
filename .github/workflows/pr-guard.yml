@@ -54,8 +54,14 @@ jobs:
       - name: IPC token invariant grep
         shell: bash
         run: |
-          if grep -rnE "@tauri-apps/plugin-fs|localStorage|sessionStorage|indexedDB" src/; then
+          # Match the token-persistence APIs in actual code (followed by `.`,
+          # `[`, or `=`), NOT in declaration/comment lines that just name them.
+          # The invariant comment in ipc.ts deliberately lists these keywords
+          # — a bare keyword grep would self-flag.
+          hits=$(grep -rnE '(@tauri-apps/plugin-fs|(localStorage|sessionStorage|indexedDB)\s*[\.\[=])' src/ || true)
+          if [ -n "$hits" ]; then
             echo "::error::IPC token invariant violated — see ipc.ts header comment"
+            echo "$hits"
             exit 1
           fi
 
