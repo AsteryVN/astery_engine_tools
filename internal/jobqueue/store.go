@@ -74,10 +74,55 @@ const (
 	StatusSucceeded = "succeeded"
 	StatusFailed    = "failed"
 	StatusAbandoned = "abandoned"
+	StatusCancelled = "cancelled"
 )
 
 // ErrNotFound is returned by GetJob etc when the row is missing.
 var ErrNotFound = errors.New("job not found")
+
+// ErrJobTerminal is returned by Cancel when the target job is already in a
+// terminal state and therefore cannot be cancelled.
+var ErrJobTerminal = errors.New("job already terminal")
+
+// IsTerminal reports whether a status string represents a terminal state
+// (no further transitions allowed).
+func IsTerminal(status string) bool {
+	switch status {
+	case StatusSucceeded, StatusFailed, StatusAbandoned, StatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Cancel transitions a non-terminal job to StatusCancelled.
+//
+// Returns [ErrNotFound] if no row matches, [ErrJobTerminal] if the job is
+// already in a terminal state. NOTE: this only flips the database row; an
+// in-flight executor goroutine has its own context cancellation path and is
+// not interrupted from here. Surrendering the cloud lease + actually
+// stopping a running executor is a follow-up (see TODO in scheduler).
+func (s *Store) Cancel(ctx context.Context, jobID string) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+
+	var status string
+	if err := s.db.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id = ?`, jobID).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("cancel: lookup status: %w", err)
+	}
+	if IsTerminal(status) {
+		return ErrJobTerminal
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE jobs SET status = ?, updated_at = datetime('now') WHERE id = ?`,
+		StatusCancelled, jobID); err != nil {
+		return fmt.Errorf("cancel: update status: %w", err)
+	}
+	return nil
+}
 
 // InsertJobInput is the body of CreateJob.
 type InsertJobInput struct {

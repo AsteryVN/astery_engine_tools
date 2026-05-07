@@ -168,3 +168,47 @@ When code-signing lands (planned with the Tauri installer release):
 - Cloud-side manifest endpoint: `wiki/architecture/engine-tools-release-manifest.md` in `AsteryVN/astery_engine`.
 - Updater roadmap (delta updates, channels, staged rollout): `wiki/architecture/engine-tools-updater-roadmap.md` in `AsteryVN/astery_engine`.
 - Frontend consumer: `frontend/src/components/desktop/DownloadAppCard.tsx` in `AsteryVN/astery_engine`.
+
+## v0.2.x Tauri shell — manual E2E runbook
+
+Run on each platform after `release-installer.yml` produces artifacts. The
+goal is to catch sidecar lifecycle, pairing, and SSE regressions that unit
+tests can't reach.
+
+### Smoke test (per-platform — macOS, Windows, Linux)
+
+1. **Install.** Open the installer (`.dmg` / `.msi` / `.AppImage`) and
+   accept the unsigned-artifact warning per the documented workaround
+   (Gatekeeper → right-click Open; SmartScreen → More info → Run anyway).
+2. **First launch.** Double-click the app. Expected: window opens within
+   3s; `engine-toold` child PID visible in `ps`/Task Manager.
+3. **Pairing.** Generate a display code from the cloud admin UI →
+   navigate to `/pairing` in the shell → enter the code → submit. Expect
+   green "Paired" badge and auto-redirect to Dashboard.
+4. **Dashboard polling.** Watch Status card refresh every 5s. Click
+   Pause; verify status flips to `paused`; click Resume.
+5. **Logs SSE.** Navigate to `/logs`. Expect `open` connection-state
+   badge within 1s. Trigger a workload from the cloud → log lines stream
+   in. Scroll up; verify auto-scroll pauses; scroll back to bottom;
+   verify it resumes.
+6. **Daemon-crash reconnect.** Find the daemon PID and `kill -9` it.
+   Logs page should transition `open → reconnecting → give-up` within
+   ~30s following the documented backoff schedule. Click "Reconnect"
+   button → state should return to `connecting`. Click "Start daemon"
+   on the error page (or relaunch); SSE resumes.
+7. **App quit.** Close the window. Verify the daemon child PID exits
+   within 2s (no orphaned processes).
+
+### Pass/fail criteria
+
+- All 7 steps complete without uncaught JS errors in devtools.
+- No `ipc.token` value appears in the devtools network panel preview.
+- No orphaned daemon process after window close.
+
+### Known caveats (v0.2.x)
+
+- Unsigned installers: Gatekeeper / SmartScreen warnings expected on
+  first launch. Document for end users in release notes until the
+  signing follow-up lands.
+- `--with-ui` (daemon-spawns-shell) path is documented but not part of
+  the default install flow; manual smoke optional.
