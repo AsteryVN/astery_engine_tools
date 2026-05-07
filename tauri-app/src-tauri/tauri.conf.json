@@ -29,7 +29,8 @@
     "targets": ["dmg", "msi", "appimage"],
     "icon": [
       "icons/32x32.png",
-      "icons/128x128.png"
+      "icons/128x128.png",
+      "icons/icon.ico"
     ],
     "externalBin": ["binaries/engine-toold"],
     "category": "DeveloperTool",
