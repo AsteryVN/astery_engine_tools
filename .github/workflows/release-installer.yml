@@ -40,7 +40,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: darwin,  arch: x64,   runner: macos-13,        rust_target: x86_64-apple-darwin,        go_goos: darwin,  go_goarch: amd64, ext: dmg }
+          # darwin_x64 (macos-13) skipped — macos-13 runners are not allocated on
+          # this GitHub plan / org and queued jobs sit indefinitely. darwin_arm64
+          # (macos-14, Apple Silicon) covers Mac users with arm64; darwin_x64
+          # users get the headless daemon archive from release.yml until macos-15
+          # (or a self-hosted runner) is available. Track in TODO; cloud manifest
+          # darwin_x64 installer URL will 404 — same situation as windows_arm64.
           - { os: darwin,  arch: arm64, runner: macos-14,        rust_target: aarch64-apple-darwin,       go_goos: darwin,  go_goarch: arm64, ext: dmg }
           - { os: windows, arch: x64,   runner: windows-latest,  rust_target: x86_64-pc-windows-msvc,     go_goos: windows, go_goarch: amd64, ext: msi }
           - { os: linux,   arch: x64,   runner: ubuntu-24.04,    rust_target: x86_64-unknown-linux-gnu,   go_goos: linux,   go_goarch: amd64, ext: AppImage }
