@@ -200,12 +200,49 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Anti-CSRF: reject any cross-origin request on the loopback
 		// server. Tauri renderer Origins are explicitly whitelisted.
-		if origin := r.Header.Get("Origin"); origin != "" && !s.allowOrigin {
-			if _, ok := tauriOriginAllowlist[origin]; !ok {
-				writeErr(w, http.StatusForbidden, "origin not allowed")
-				return
+		origin := r.Header.Get("Origin")
+		originAllowed := origin == "" || s.allowOrigin
+		if origin != "" && !s.allowOrigin {
+			if _, ok := tauriOriginAllowlist[origin]; ok {
+				originAllowed = true
 			}
 		}
+		if !originAllowed {
+			writeErr(w, http.StatusForbidden, "origin not allowed")
+			return
+		}
+
+		// CORS response headers for allowlisted Tauri renderer origins.
+		// Required because the renderer page origin (tauri://localhost on
+		// macOS/Linux, https://tauri.localhost on Windows) is cross-origin
+		// to the loopback http://127.0.0.1:<port> server, and any fetch
+		// carrying an Authorization header is a non-simple request that
+		// triggers a CORS preflight in WebKit/Blink. Without these headers
+		// the renderer's fetch() rejects with TypeError "Load failed"
+		// before the actual request is ever sent.
+		if origin != "" {
+			h := w.Header()
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Vary", "Origin")
+			h.Set("Access-Control-Allow-Credentials", "true")
+		}
+
+		// Short-circuit CORS preflight: respond 204 with the negotiated
+		// method/header allow-list, skipping the bearer check (preflights
+		// never carry the Authorization header by design).
+		if r.Method == http.MethodOptions && origin != "" {
+			h := w.Header()
+			if reqHeaders := r.Header.Get("Access-Control-Request-Headers"); reqHeaders != "" {
+				h.Set("Access-Control-Allow-Headers", reqHeaders)
+			} else {
+				h.Set("Access-Control-Allow-Headers", "Authorization, Accept, Content-Type")
+			}
+			h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			h.Set("Access-Control-Max-Age", "600")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if strings.TrimSpace(got) != s.token {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
