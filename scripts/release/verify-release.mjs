@@ -61,11 +61,6 @@ async function fetchRelease(repo, tag) {
   return JSON.parse(raw)
 }
 
-async function head(url) {
-  const res = await fetch(url, { method: "HEAD", redirect: "follow" })
-  return res.status
-}
-
 function loadFixture(path) {
   return JSON.parse(readFileSync(path, "utf8"))
 }
@@ -106,23 +101,32 @@ async function main() {
     process.exit(1)
   }
 
+  // Asset presence in the release JSON's assets[] is GitHub's confirmation
+  // that the upload finished. We deliberately do NOT HEAD `browser_download_url`
+  // because that URL is anonymous and 404s on private repos even when the
+  // asset is correctly stored — historical false-alarms ate two release
+  // pipeline runs (v0.1.1-mvp, v0.2.0-rc1). For real reachability checks on
+  // private repos, the only correct path is `gh api -H "Accept: application/
+  // octet-stream" /repos/<repo>/releases/assets/<id>` which returns a
+  // short-lived signed URL. End-user clients use the cloud manifest's
+  // download proxy for that hop; they never hit `browser_download_url`
+  // directly. So smoke-validating the proxy path is overkill for the
+  // upload-finished question this script is meant to answer.
   let failures = 0
   for (const name of expected) {
     const asset = byName.get(name)
-    const url = asset.browser_download_url
-    const status = await head(url)
-    if (status >= 200 && status < 400) {
-      console.log(`ok   ${status}  ${name}`)
+    if (asset.size > 0 && asset.state === "uploaded") {
+      console.log(`ok   ${asset.size}b  ${name}`)
     } else {
-      console.error(`fail ${status}  ${name}  (${url})`)
+      console.error(`fail size=${asset.size} state=${asset.state}  ${name}`)
       failures++
     }
   }
   if (failures > 0) {
-    console.error(`smoke validation failed: ${failures} unreachable assets`)
+    console.error(`smoke validation failed: ${failures} assets not in uploaded state`)
     process.exit(1)
   }
-  console.log(`smoke validation OK: ${expected.length} assets reachable`)
+  console.log(`smoke validation OK: ${expected.length} assets present + uploaded`)
 }
 
 await main()
