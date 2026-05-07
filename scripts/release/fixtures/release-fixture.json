@@ -1,0 +1,13 @@
+{
+  "tag_name": "v0.1.0-mvp",
+  "assets": [
+    { "name": "astery-engine-tools_v0.1.0-mvp_darwin_arm64.tar.gz" },
+    { "name": "astery-engine-tools_v0.1.0-mvp_darwin_x64.tar.gz" },
+    { "name": "astery-engine-tools_v0.1.0-mvp_linux_arm64.tar.gz" },
+    { "name": "astery-engine-tools_v0.1.0-mvp_linux_x64.tar.gz" },
+    { "name": "astery-engine-tools_v0.1.0-mvp_windows_arm64.zip" },
+    { "name": "astery-engine-tools_v0.1.0-mvp_windows_x64.zip" },
+    { "name": "SHA256SUMS" },
+    { "name": "release-manifest.json" }
+  ]
+}

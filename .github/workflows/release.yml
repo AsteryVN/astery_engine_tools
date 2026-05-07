@@ -1,0 +1,248 @@
+name: release
+
+# Release pipeline for engine-toold daemon archives. v0.1.x ships only the
+# headless Go binary as a per-platform archive (.tar.gz on darwin/linux,
+# .zip on windows). Six artifacts total (3 OS × 2 arch). When the Tauri
+# shell ships, a sibling `release-installer.yml` will publish .dmg/.msi/
+# .AppImage rows alongside; the cloud manifest's `kind` field separates
+# them. See docs/RELEASE.md for the runbook.
+#
+# Filename convention (mirrored by the cloud manifest endpoint):
+#   astery-engine-tools_${version}_${os}_${arch}.${ext}
+# os ∈ {darwin, windows, linux}, arch ∈ {x64, arm64}, ext ∈ {tar.gz, zip}.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to publish (must already exist on the repo, e.g. v0.1.0-mvp)"
+        type: string
+        required: true
+      mark_latest:
+        description: "Mark this release as the GitHub 'latest' release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build ${{ matrix.os }}_${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: darwin, arch: x64,   goos: darwin,  goarch: amd64, ext: tar.gz }
+          - { os: darwin, arch: arm64, goos: darwin,  goarch: arm64, ext: tar.gz }
+          - { os: windows, arch: x64,   goos: windows, goarch: amd64, ext: zip }
+          - { os: windows, arch: arm64, goos: windows, goarch: arm64, ext: zip }
+          - { os: linux,  arch: x64,   goos: linux,   goarch: amd64, ext: tar.gz }
+          - { os: linux,  arch: arm64, goos: linux,   goarch: arm64, ext: tar.gz }
+
+    env:
+      VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
+    steps:
+      - name: Validate version
+        env:
+          INPUT_VERSION: ${{ env.VERSION }}
+        run: |
+          set -euo pipefail
+          if ! [[ "${INPUT_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.+-]+)?$ ]]; then
+            echo "::error::invalid version ${INPUT_VERSION} — expected vMAJOR.MINOR.PATCH[-suffix]"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.VERSION }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build daemon
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          ext_bin=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then ext_bin=".exe"; fi
+          mkdir -p dist/staging
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${VERSION#v}" \
+            -o "dist/staging/engine-toold${ext_bin}" \
+            ./cmd/engine-toold
+          cp LICENSE README.md dist/staging/
+
+      - name: Archive
+        id: archive
+        env:
+          OS_NAME: ${{ matrix.os }}
+          ARCH_NAME: ${{ matrix.arch }}
+          EXT: ${{ matrix.ext }}
+        run: |
+          set -euo pipefail
+          name="astery-engine-tools_${VERSION}_${OS_NAME}_${ARCH_NAME}.${EXT}"
+          mkdir -p dist/out
+          if [ "${EXT}" = "zip" ]; then
+            (cd dist/staging && zip -r "../out/${name}" .)
+          else
+            tar -C dist/staging -czf "dist/out/${name}" .
+          fi
+          sha=$(sha256sum "dist/out/${name}" | awk '{print $1}')
+          size=$(stat -c%s "dist/out/${name}")
+          {
+            echo "name=${name}"
+            echo "sha=${sha}"
+            echo "size=${size}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Emit per-asset metadata
+        run: |
+          mkdir -p dist/meta
+          cat > "dist/meta/${{ steps.archive.outputs.name }}.json" <<EOF
+          {
+            "name": "${{ steps.archive.outputs.name }}",
+            "os": "${{ matrix.os }}",
+            "arch": "${{ matrix.arch }}",
+            "kind": "daemon",
+            "ext": "${{ matrix.ext }}",
+            "sha256": "${{ steps.archive.outputs.sha }}",
+            "size_bytes": ${{ steps.archive.outputs.size }}
+          }
+          EOF
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/out/*
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: meta-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/meta/*.json
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: [build]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    env:
+      VERSION: ${{ github.event.inputs.version || github.ref_name }}
+      MARK_LATEST: ${{ github.event.inputs.mark_latest != 'false' }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Validate version
+        env:
+          INPUT_VERSION: ${{ env.VERSION }}
+        run: |
+          set -euo pipefail
+          if ! [[ "${INPUT_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.+-]+)?$ ]]; then
+            echo "::error::invalid version ${INPUT_VERSION} — expected vMAJOR.MINOR.PATCH[-suffix]"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.VERSION }}
+
+      - name: Setup Node (for manifest builder)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Download all archives
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/in
+          pattern: archive-*
+          merge-multiple: true
+
+      - name: Download all metadata
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/meta
+          pattern: meta-*
+          merge-multiple: true
+
+      - name: Build SHA256SUMS
+        run: |
+          set -euo pipefail
+          (cd dist/in && sha256sum -- ./*.tar.gz ./*.zip | sort -k2) > dist/SHA256SUMS
+          cat dist/SHA256SUMS
+
+      - name: Build release-manifest.json
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/release/build-manifest.mjs \
+            --version "${VERSION}" \
+            --repo    "${REPO}" \
+            --meta-dir dist/meta \
+            --out      dist/release-manifest.json
+          cat dist/release-manifest.json
+
+      - name: Pre-flight — confirm 6 archives + manifest + sums
+        run: |
+          set -euo pipefail
+          archives=$(find dist/in -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)
+          if [ "${archives}" -ne 6 ]; then
+            echo "::error::expected 6 archives, found ${archives}"; exit 1
+          fi
+          test -f dist/SHA256SUMS || { echo "::error::missing SHA256SUMS"; exit 1; }
+          test -f dist/release-manifest.json || { echo "::error::missing release-manifest.json"; exit 1; }
+
+      - name: Upload to GitHub release
+        run: |
+          set -euo pipefail
+          # Create the release if it doesn't exist; --clobber overwrites
+          # individual assets on re-runs of the same tag.
+          if ! gh release view "${VERSION}" >/dev/null 2>&1; then
+            gh release create "${VERSION}" \
+              --title "${VERSION}" \
+              --generate-notes \
+              --verify-tag
+          fi
+          gh release upload "${VERSION}" \
+            dist/in/*.tar.gz dist/in/*.zip \
+            dist/SHA256SUMS \
+            dist/release-manifest.json \
+            --clobber
+
+      - name: Mark release as latest
+        if: env.MARK_LATEST == 'true'
+        run: gh release edit "${VERSION}" --latest
+
+      - name: Smoke validation
+        run: |
+          set -euo pipefail
+          node scripts/release/verify-release.mjs \
+            --tag "${VERSION}" \
+            --repo "${{ github.repository }}"

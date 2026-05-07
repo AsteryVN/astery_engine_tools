@@ -41,6 +41,10 @@ make test
 make run         # foreground, --headless
 ```
 
+## Releases
+
+Tagged releases (`v*`) auto-publish 6 daemon archives + `SHA256SUMS` + `release-manifest.json` to the GitHub release. See [`docs/RELEASE.md`](docs/RELEASE.md) for the runbook (tag flow, hotfix, rollback, signing-key rotation, arm64 fallback).
+
 ## License
 
 MIT — see `LICENSE`.
