@@ -1,0 +1,134 @@
+package auth
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// PairingClient performs the pairing handshake against the cloud control
+// plane. Returns a SessionBundle the daemon then hands to the keystore.
+type PairingClient struct {
+	baseURL string
+	http    *http.Client
+}
+
+// NewPairingClient constructs a PairingClient.
+func NewPairingClient(baseURL string) *PairingClient {
+	return &PairingClient{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		http:    &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// ExchangeRequest is the desktop's exchange-payload.
+type ExchangeRequest struct {
+	DisplayCode  string  `json:"display_code"`
+	Device       Device  `json:"device"`
+	HwFingerprint string `json:"hw_fingerprint"`
+	DevicePubkey string  `json:"device_pubkey,omitempty"`
+}
+
+// Device describes the engine node at pairing time.
+type Device struct {
+	InstallationID string `json:"installation_id"`
+	DisplayName    string `json:"display_name"`
+	Hostname       string `json:"hostname,omitempty"`
+	OS             string `json:"os"`
+	Arch           string `json:"arch"`
+	AppVersion     string `json:"app_version,omitempty"`
+	RuntimeVersion string `json:"runtime_version,omitempty"`
+}
+
+// ExchangeResponse mirrors the cloud body (under data envelope).
+type ExchangeResponse struct {
+	Device  ResponseDevice  `json:"device"`
+	Session ResponseToken   `json:"session"`
+	Refresh ResponseToken   `json:"refresh"`
+}
+
+// ResponseDevice is the device row the cloud returned.
+type ResponseDevice struct {
+	ID             string `json:"id"`
+	OrganizationID string `json:"organization_id"`
+}
+
+// ResponseToken is a token + expiry pair.
+type ResponseToken struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// Exchange performs POST /v1/desktop/exchange.
+func (c *PairingClient) Exchange(ctx context.Context, req ExchangeRequest) (*ExchangeResponse, error) {
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal exchange: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/desktop/exchange", bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("new exchange request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Idempotency-Key", uuid.NewString())
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("exchange http: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("exchange: status %d: %s", resp.StatusCode, string(body))
+	}
+	var env struct {
+		Data ExchangeResponse `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, fmt.Errorf("decode exchange: %w", err)
+	}
+	return &env.Data, nil
+}
+
+// RefreshRequest is the rotate-payload.
+type RefreshRequest struct {
+	RefreshToken  string `json:"refresh_token"`
+	HwFingerprint string `json:"hw_fingerprint"`
+}
+
+// Refresh performs POST /v1/desktop/sessions/refresh and returns a fresh
+// session+refresh pair (rotated).
+func (c *PairingClient) Refresh(ctx context.Context, req RefreshRequest) (*ExchangeResponse, error) {
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal refresh: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/desktop/sessions/refresh", bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("new refresh request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Idempotency-Key", uuid.NewString())
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("refresh http: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("refresh: status %d: %s", resp.StatusCode, string(body))
+	}
+	var env struct {
+		Data ExchangeResponse `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, fmt.Errorf("decode refresh: %w", err)
+	}
+	return &env.Data, nil
+}
