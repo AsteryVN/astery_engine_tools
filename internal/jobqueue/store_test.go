@@ -41,6 +41,27 @@ func seedJob(t *testing.T, s *Store, id, status string) {
 	}
 }
 
+func TestGetByWorkloadID(t *testing.T) {
+	s := newTestStore(t)
+	seedJob(t, s, "job1", StatusFailed)
+	ctx := context.Background()
+
+	got, err := s.GetByWorkloadID(ctx, "job1-w")
+	if err != nil {
+		t.Fatalf("get by workload id: %v", err)
+	}
+	if got.ID != "job1" {
+		t.Fatalf("got job %q, want job1", got.ID)
+	}
+	if got.Status != StatusFailed {
+		t.Fatalf("got status %q, want failed", got.Status)
+	}
+
+	if _, err := s.GetByWorkloadID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing workload should return ErrNotFound, got %v", err)
+	}
+}
+
 func TestCancel_HappyPath(t *testing.T) {
 	s := newTestStore(t)
 	seedJob(t, s, "job1", StatusQueued)

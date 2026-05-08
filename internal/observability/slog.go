@@ -41,7 +41,10 @@ func Hub() LogHub {
 // handler that publishes every record into a process-wide [LogHub] for SSE
 // subscribers. The stderr/stdout output is unchanged.
 func Setup(level slog.Level, a Attrs) *slog.Logger {
-	base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+	base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level:       level,
+		ReplaceAttr: renderErrorAsString,
+	})
 	defaultHub = newHub()
 	fan := newFanoutHandler(base, defaultHub)
 	attrs := []slog.Attr{
@@ -78,6 +81,18 @@ func WithAttrs(ctx context.Context, attrs ...slog.Attr) context.Context {
 	merged := append([]slog.Attr(nil), prev...)
 	merged = append(merged, attrs...)
 	return context.WithValue(ctx, ctxKey{}, merged)
+}
+
+// renderErrorAsString rewrites any attr whose value is an error so the JSON
+// handler emits err.Error() instead of marshaling the concrete type — wrapped
+// errors from fmt.Errorf have no exported fields and otherwise render as `{}`.
+func renderErrorAsString(_ []string, a slog.Attr) slog.Attr {
+	if a.Value.Kind() == slog.KindAny {
+		if err, ok := a.Value.Any().(error); ok {
+			a.Value = slog.StringValue(err.Error())
+		}
+	}
+	return a
 }
 
 // Logger returns a logger with attrs added by WithAttrs (if any).
