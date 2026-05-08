@@ -36,5 +36,16 @@
     "category": "DeveloperTool",
     "shortDescription": "Astery Engine Tools desktop control panel",
     "longDescription": "Desktop UI for the Astery Engine local daemon: status, jobs, logs, pairing."
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/AsteryVN/astery_engine_tools/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZBQjI3NkRDOTNCQ0RGNDgKUldSSTM3eVQzSGF5K2c4UE5iaFVtZm5mZW9XNWVPWUwwNi9yM2tkeGdobHdsdWhxSUlaQXZodEIK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
