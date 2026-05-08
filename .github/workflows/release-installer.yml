@@ -177,8 +177,8 @@ jobs:
               updater_src="tauri-app/src-tauri/target/${target}/release/bundle/macos"
               found_app="$(find "$updater_src" -maxdepth 1 -type f -name '*.app.tar.gz' | head -n1)"
               found_sig="$(find "$updater_src" -maxdepth 1 -type f -name '*.app.tar.gz.sig' | head -n1)"
-              test -n "$found_app" || (echo "::error::no .app.tar.gz produced under $updater_src — TAURI_SIGNING_PRIVATE_KEY likely empty" && exit 1)
-              test -n "$found_sig" || (echo "::error::no .app.tar.gz.sig produced under $updater_src" && exit 1)
+              test -n "$found_app" || (echo "::error::no .app.tar.gz produced under $updater_src — check tauri.conf.json bundle.createUpdaterArtifacts=true (Tauri 2 does NOT auto-emit updater bundles without it)" && exit 1)
+              test -n "$found_sig" || (echo "::error::no .app.tar.gz.sig produced under $updater_src — createUpdaterArtifacts is set but TAURI_SIGNING_PRIVATE_KEY is missing/empty" && exit 1)
               updater_name="astery-engine-tools_${version}_${os}_${arch}_updater.app.tar.gz"
               cp "$found_app" "$out_dir/$updater_name"
               cp "$found_sig" "$out_dir/${updater_name}.sig"
@@ -187,7 +187,7 @@ jobs:
               ;;
             linux|windows)
               found_sig="$(find "$installer_src" -maxdepth 1 -type f -name "*.${ext}.sig" | head -n1)"
-              test -n "$found_sig" || (echo "::error::no .${ext}.sig produced under $installer_src — TAURI_SIGNING_PRIVATE_KEY likely empty" && exit 1)
+              test -n "$found_sig" || (echo "::error::no .${ext}.sig produced under $installer_src — check tauri.conf.json bundle.createUpdaterArtifacts=true AND TAURI_SIGNING_PRIVATE_KEY is set" && exit 1)
               cp "$found_sig" "$out_dir/${name}.sig"
               updater_url="$name"
               updater_sig="${name}.sig"

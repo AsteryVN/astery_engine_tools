@@ -67,8 +67,16 @@ manifest.
 
 The Tauri shell installers ship from `.github/workflows/release-installer.yml`
 (not `release.yml` — that one ships the headless `engine-toold` daemon
-archives). When `TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
-are set in the build env, `pnpm tauri build` automatically:
+archives). Two pieces are required for `pnpm tauri build` to emit signed
+updater artifacts:
+
+1. `bundle.createUpdaterArtifacts: true` in `tauri.conf.json` — Tauri 2
+   does **not** emit updater bundles by default; this flag opts in.
+2. `TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in
+   the build env — without these, the bundles are emitted but unsigned
+   and `latest.json` composition will fail downstream.
+
+With both set, `pnpm tauri build` automatically:
 
 1. Produces the user-facing installer (`.dmg` / `.msi` / `.AppImage`).
 2. On macOS, also produces the updater bundle `*.app.tar.gz` under
