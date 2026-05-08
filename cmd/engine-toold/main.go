@@ -30,6 +30,7 @@ import (
 
 	"github.com/AsteryVN/astery_engine_tools/internal/auth"
 	"github.com/AsteryVN/astery_engine_tools/internal/executors/clipvideo"
+	"github.com/AsteryVN/astery_engine_tools/internal/executors/extractaudio"
 	"github.com/AsteryVN/astery_engine_tools/internal/ipc"
 	"github.com/AsteryVN/astery_engine_tools/internal/jobqueue"
 	"github.com/AsteryVN/astery_engine_tools/internal/observability"
@@ -129,6 +130,7 @@ func main() {
 
 	reg := registry.New()
 	reg.Register(clipvideo.New(tm))
+	reg.Register(extractaudio.New(tm))
 
 	resMgr := resources.New(resources.Limits{}, layout.Root)
 
