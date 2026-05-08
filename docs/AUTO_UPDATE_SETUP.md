@@ -67,12 +67,18 @@ manifest.
 
 The Tauri shell installers ship from `.github/workflows/release-installer.yml`
 (not `release.yml` — that one ships the headless `engine-toold` daemon
-archives). Two pieces are required for `pnpm tauri build` to emit signed
+archives). Three pieces are required for `pnpm tauri build` to emit signed
 updater artifacts:
 
 1. `bundle.createUpdaterArtifacts: true` in `tauri.conf.json` — Tauri 2
    does **not** emit updater bundles by default; this flag opts in.
-2. `TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in
+2. `bundle.targets` must include **`"app"`** alongside `"dmg"` on macOS.
+   Without `"app"`, Tauri builds the `.app` only as a temporary intermediate
+   for the `.dmg` and then **deletes** it before `createUpdaterArtifacts`
+   runs — no `.app.tar.gz` is produced. Symptom: `Finished 1 bundle` in
+   the build log naming only the `.dmg`. (Linux/Windows are fine because
+   `appimage`/`msi` outputs are not destroyed mid-build.)
+3. `TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in
    the build env — without these, the bundles are emitted but unsigned
    and `latest.json` composition will fail downstream.
 
