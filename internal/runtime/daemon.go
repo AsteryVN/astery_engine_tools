@@ -81,6 +81,10 @@ func CapabilityPayload(deviceID, installationID, appVersion, runtimeVersion, ffm
 	executors := []map[string]any{}
 	if ffmpegVersion != "" {
 		executors = append(executors, map[string]any{"id": "clip-video", "version": 1})
+		// video:extract-audio executor — same ffmpeg dependency as clip-video.
+		// Advertised so the cloud's claim filter routes extract-audio
+		// workloads to ffmpeg-capable devices.
+		executors = append(executors, map[string]any{"id": "video:extract-audio", "version": 1})
 	}
 	sort.Slice(executors, func(i, j int) bool { return executors[i]["id"].(string) < executors[j]["id"].(string) })
 	return map[string]any{
