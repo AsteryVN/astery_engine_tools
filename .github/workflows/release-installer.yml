@@ -10,9 +10,12 @@ name: release-installer
 #   astery-engine-tools_${version}_${os}_${arch}_installer.${ext}
 # os ∈ {darwin, windows, linux}, arch ∈ {x64, arm64}, ext ∈ {dmg, msi, AppImage}.
 #
-# Artifacts are unsigned in v0.2.x. Apple notarization (APPLE_TEAM_ID +
-# APPLE_API_KEY_*) and Windows Authenticode (WINDOWS_PFX_BASE64) are a
-# follow-up — see docs/RELEASE.md §code-signing.
+# Installer bundles are signed with the Tauri updater key
+# (TAURI_SIGNING_PRIVATE_KEY) starting v0.2.1 so the updater plugin can
+# verify a tampered latest.json cannot trigger an install. Apple
+# notarization (APPLE_TEAM_ID + APPLE_API_KEY_*) and Windows Authenticode
+# (WINDOWS_PFX_BASE64) are still a follow-up — see docs/RELEASE.md
+# §code-signing.
 
 on:
   push:
@@ -119,13 +122,19 @@ jobs:
       - name: tauri build
         working-directory: tauri-app
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ""
+          # Signing the updater bundle / installer with the ed25519 key gates
+          # the latest.json flow — without these, .sig files are not produced
+          # and the publish job's compose step will fail. Repo secrets are set
+          # by the maintainer per docs/AUTO_UPDATE_SETUP.md.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --target ${{ matrix.rust_target }}
 
-      - name: Stage + rename installer
+      - name: Stage installer + updater bundle
         id: stage
         shell: bash
         run: |
+          set -euo pipefail
           version="${{ steps.ver.outputs.version }}"
           os="${{ matrix.os }}"
           arch="${{ matrix.arch }}"
@@ -133,28 +142,69 @@ jobs:
           target="${{ matrix.rust_target }}"
           out_dir="dist-installer"
           mkdir -p "$out_dir"
+
+          # 1) The user-facing installer bundle (.dmg/.msi/.AppImage).
           name="astery-engine-tools_${version}_${os}_${arch}_installer.${ext}"
           case "$ext" in
-            dmg)      src="tauri-app/src-tauri/target/${target}/release/bundle/dmg" ;;
-            msi)      src="tauri-app/src-tauri/target/${target}/release/bundle/msi" ;;
-            AppImage) src="tauri-app/src-tauri/target/${target}/release/bundle/appimage" ;;
+            dmg)      installer_src="tauri-app/src-tauri/target/${target}/release/bundle/dmg" ;;
+            msi)      installer_src="tauri-app/src-tauri/target/${target}/release/bundle/msi" ;;
+            AppImage) installer_src="tauri-app/src-tauri/target/${target}/release/bundle/appimage" ;;
             *) echo "::error::unknown ext $ext" && exit 1 ;;
           esac
-          found="$(find "$src" -maxdepth 1 -type f -name "*.${ext}" | head -n1)"
-          test -n "$found" || (echo "::error::no $ext produced under $src" && exit 1)
+          found="$(find "$installer_src" -maxdepth 1 -type f -name "*.${ext}" | head -n1)"
+          test -n "$found" || (echo "::error::no $ext produced under $installer_src" && exit 1)
           cp "$found" "$out_dir/$name"
           if command -v sha256sum >/dev/null 2>&1; then
             (cd "$out_dir" && sha256sum "$name" > "${name}.sha256")
           else
             (cd "$out_dir" && shasum -a 256 "$name" > "${name}.sha256")
           fi
+
+          # 2) Updater bundle + signature.
+          #
+          # On Linux/Windows the user-facing installer file is *also* the
+          # updater bundle — Tauri writes the .sig sidecar next to it. We
+          # publish the .sig under the renamed installer name so latest.json
+          # can point to one URL.
+          #
+          # On macOS the updater bundle is a separate `.app.tar.gz` produced
+          # under bundle/macos/ alongside the .dmg. We rename it to
+          # `_updater.app.tar.gz` so its URL stays predictable.
+          updater_url=""
+          updater_sig=""
+          case "$os" in
+            darwin)
+              updater_src="tauri-app/src-tauri/target/${target}/release/bundle/macos"
+              found_app="$(find "$updater_src" -maxdepth 1 -type f -name '*.app.tar.gz' | head -n1)"
+              found_sig="$(find "$updater_src" -maxdepth 1 -type f -name '*.app.tar.gz.sig' | head -n1)"
+              test -n "$found_app" || (echo "::error::no .app.tar.gz produced under $updater_src — TAURI_SIGNING_PRIVATE_KEY likely empty" && exit 1)
+              test -n "$found_sig" || (echo "::error::no .app.tar.gz.sig produced under $updater_src" && exit 1)
+              updater_name="astery-engine-tools_${version}_${os}_${arch}_updater.app.tar.gz"
+              cp "$found_app" "$out_dir/$updater_name"
+              cp "$found_sig" "$out_dir/${updater_name}.sig"
+              updater_url="$updater_name"
+              updater_sig="${updater_name}.sig"
+              ;;
+            linux|windows)
+              found_sig="$(find "$installer_src" -maxdepth 1 -type f -name "*.${ext}.sig" | head -n1)"
+              test -n "$found_sig" || (echo "::error::no .${ext}.sig produced under $installer_src — TAURI_SIGNING_PRIVATE_KEY likely empty" && exit 1)
+              cp "$found_sig" "$out_dir/${name}.sig"
+              updater_url="$name"
+              updater_sig="${name}.sig"
+              ;;
+            *) echo "::error::unknown os $os" && exit 1 ;;
+          esac
+
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "dir=$out_dir" >> "$GITHUB_OUTPUT"
+          echo "updater_url=$updater_url" >> "$GITHUB_OUTPUT"
+          echo "updater_sig=$updater_sig" >> "$GITHUB_OUTPUT"
+          ls -lh "$out_dir"
 
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.os }}-${{ matrix.arch }}
-          path: ${{ steps.stage.outputs.dir }}/${{ steps.stage.outputs.name }}*
+          path: ${{ steps.stage.outputs.dir }}/*
           if-no-files-found: error
           retention-days: 14
 
@@ -181,9 +231,80 @@ jobs:
           done
           cat SHA256SUMS-installers
 
+      - name: Compose latest.json
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.version != '' && inputs.version || github.ref_name }}"
+          version="${tag#v}"
+          base="https://github.com/${REPO}/releases/download/${tag}"
+          pub_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # Map matrix os/arch onto Tauri 2 platform identifiers + the
+          # download URL the updater bundle was uploaded under. Keep this
+          # table in sync with the build matrix.
+          declare -A platforms=(
+            ["darwin-aarch64"]="astery-engine-tools_${tag}_darwin_arm64_updater.app.tar.gz"
+            ["windows-x86_64"]="astery-engine-tools_${tag}_windows_x64_installer.msi"
+            ["linux-x86_64"]="astery-engine-tools_${tag}_linux_x64_installer.AppImage"
+            ["linux-aarch64"]="astery-engine-tools_${tag}_linux_arm64_installer.AppImage"
+          )
+
+          # Build the platforms object incrementally with jq so signature
+          # contents (multi-line minisign blobs) are escaped correctly.
+          platforms_json='{}'
+          for plat in "${!platforms[@]}"; do
+            file="${platforms[$plat]}"
+            sig_path="dist-installer/${file}.sig"
+            if [ ! -f "$sig_path" ]; then
+              echo "::error::missing signature for $plat at $sig_path"
+              exit 1
+            fi
+            sig="$(cat "$sig_path")"
+            platforms_json="$(jq -n \
+              --argjson cur "$platforms_json" \
+              --arg key "$plat" \
+              --arg url "${base}/${file}" \
+              --arg sig "$sig" \
+              '$cur + {($key): {signature: $sig, url: $url}}')"
+          done
+
+          # Read release notes from the release body if available; fall back
+          # to a stable string so the manifest is still valid on first push.
+          notes="$(gh release view "$tag" --json body --jq '.body' 2>/dev/null || true)"
+          if [ -z "$notes" ]; then
+            notes="Astery Engine Tools ${version}"
+          fi
+
+          jq -n \
+            --arg version "$version" \
+            --arg notes "$notes" \
+            --arg pub_date "$pub_date" \
+            --argjson platforms "$platforms_json" \
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: $platforms}' \
+            > dist-installer/latest.json
+
+          cat dist-installer/latest.json
+
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           tag="${{ inputs.version != '' && inputs.version || github.ref_name }}"
-          gh release upload "$tag" dist-installer/*.dmg dist-installer/*.msi dist-installer/*.AppImage dist-installer/SHA256SUMS-installers --clobber
+          # Upload installers, updater bundles, signature sidecars, sums and
+          # the manifest. shopt -s nullglob so missing patterns (e.g. no .dmg
+          # on a linux-only build) don't abort.
+          shopt -s nullglob
+          assets=(
+            dist-installer/*.dmg
+            dist-installer/*.msi
+            dist-installer/*.AppImage
+            dist-installer/*.app.tar.gz
+            dist-installer/*.sig
+            dist-installer/SHA256SUMS-installers
+            dist-installer/latest.json
+          )
+          gh release upload "$tag" "${assets[@]}" --clobber

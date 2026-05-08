@@ -63,32 +63,46 @@ Repository secrets:
 These are read by the release workflow when it produces the signed
 manifest.
 
-## 4. Update the release pipeline to publish `latest.json`
+## 4. Release pipeline integration
 
-`.github/workflows/release.yml` already builds 6 platform archives. Add
-one more job after the `release` job that:
+The Tauri shell installers ship from `.github/workflows/release-installer.yml`
+(not `release.yml` — that one ships the headless `engine-toold` daemon
+archives). When `TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+are set in the build env, `pnpm tauri build` automatically:
 
-1. Downloads each platform archive.
-2. Runs `pnpm tauri signer sign -k $TAURI_SIGNING_PRIVATE_KEY -p $TAURI_SIGNING_PRIVATE_KEY_PASSWORD <archive>` for each (emits a `<archive>.sig` file with one base64 line).
-3. Composes a `latest.json` per the Tauri schema:
+1. Produces the user-facing installer (`.dmg` / `.msi` / `.AppImage`).
+2. On macOS, also produces the updater bundle `*.app.tar.gz` under
+   `bundle/macos/` (the `.dmg` is install-only — the updater swaps the
+   `.app` directly).
+3. Writes a `.sig` sidecar next to each updater bundle (one base64 line of
+   minisign output).
 
-   ```json
-   {
-     "version": "0.2.1",
-     "notes": "<release notes>",
-     "pub_date": "2026-05-08T12:00:00Z",
-     "platforms": {
-       "darwin-aarch64":  { "signature": "<base64 from .sig>", "url": "https://github.com/.../releases/download/v0.2.1/astery-engine-tools_0.2.1_darwin_arm64.tar.gz" },
-       "darwin-x86_64":   { ... },
-       "linux-x86_64":    { ... },
-       "windows-x86_64":  { ... }
-     }
-   }
-   ```
+The `release-installer.yml` `publish` job then composes `latest.json` from
+those `.sig` files and the predictable updater-bundle URLs:
 
-4. `gh release upload <tag> latest.json --clobber` — the file MUST be at
-   `https://github.com/AsteryVN/astery_engine_tools/releases/latest/download/latest.json`,
-   which is the URL embedded in `tauri.conf.json::endpoints`.
+```json
+{
+  "version": "0.2.1",
+  "notes": "<release notes>",
+  "pub_date": "2026-05-08T12:00:00Z",
+  "platforms": {
+    "darwin-aarch64": { "signature": "...", "url": ".../astery-engine-tools_v0.2.1_darwin_arm64_updater.app.tar.gz" },
+    "windows-x86_64": { "signature": "...", "url": ".../astery-engine-tools_v0.2.1_windows_x64_installer.msi" },
+    "linux-x86_64":   { "signature": "...", "url": ".../astery-engine-tools_v0.2.1_linux_x64_installer.AppImage" },
+    "linux-aarch64":  { "signature": "...", "url": ".../astery-engine-tools_v0.2.1_linux_arm64_installer.AppImage" }
+  }
+}
+```
+
+`darwin-x86_64` is intentionally absent — `release-installer.yml` does not
+build that target (macos-13 runners are not allocated on the current GitHub
+plan). darwin-x64 users stay on the headless daemon archive from
+`release.yml` until that runner is available.
+
+The composed `latest.json` is uploaded via `gh release upload`, so it
+lands at:
+`https://github.com/AsteryVN/astery_engine_tools/releases/latest/download/latest.json`
+— the URL embedded in `tauri.conf.json::endpoints`.
 
 ## 5. First release rollout
 
