@@ -111,6 +111,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	// POST /v1/jobs/:id/cancel under one mux entry.
 	mux.HandleFunc("/v1/jobs/", s.handleJobByID)
 	mux.HandleFunc("/v1/pair", s.handlePair)
+	mux.HandleFunc("/v1/unpair", s.handleUnpair)
 	mux.HandleFunc("/v1/logs/stream", s.handleLogsStream)
 }
 

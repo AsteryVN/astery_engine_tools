@@ -79,14 +79,31 @@ async function buildUrl(
   return url.toString();
 }
 
-function classifyHttp(status: number): IpcError {
+function classifyHttp(status: number, body?: { error?: string }): IpcError {
   switch (status) {
     case 401:
       return new IpcError('auth-rejected', 'unauthorized', status);
     case 404:
       return new IpcError('not-found', 'not found', status);
-    case 409:
+    case 409: {
+      // /v1/unpair returns 409 with body { error: "not_paired" } to signal
+      // "no pairing to undo". /v1/pair returns 409 with body { error:
+      // "already_paired" }. Branch on the body code so the renderer can
+      // distinguish the two flows without parsing strings.
+      if (body?.error === 'not_paired') {
+        return new IpcError('not-paired', 'not paired', status);
+      }
       return new IpcError('conflict', 'conflict', status);
+    }
+    case 502: {
+      if (body?.error === 'cloud_unreachable') {
+        return new IpcError('cloud-unreachable', 'cloud unreachable', status);
+      }
+      if (body?.error === 'cloud_rejected') {
+        return new IpcError('cloud-rejected', 'cloud rejected', status);
+      }
+      return new IpcError('unknown', `http ${status}`, status);
+    }
     default:
       return new IpcError('unknown', `http ${status}`, status);
   }
@@ -147,7 +164,19 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   }
 
   if (!response.ok) {
-    throw classifyHttp(response.status);
+    // Try to surface the daemon's error code envelope so classifyHttp can
+    // distinguish 409 already_paired vs 409 not_paired (and the 502 unpair
+    // sub-codes). Failing parse falls back to the status-only classifier.
+    let body: { error?: string } | undefined;
+    const ct = response.headers.get('content-type') ?? '';
+    if (ct.includes('application/json')) {
+      try {
+        body = (await response.json()) as { error?: string };
+      } catch {
+        body = undefined;
+      }
+    }
+    throw classifyHttp(response.status, body);
   }
 
   // 204 No Content is legal; return undefined cast as T.
@@ -167,6 +196,11 @@ export interface PairResult {
   org_id: string;
   device_id: string;
   expires_at: string;
+}
+
+export interface UnpairResult {
+  cleared_jobs: number;
+  forced: boolean;
 }
 
 export interface CapabilitiesResult {
@@ -207,6 +241,13 @@ export const ipc = {
     return request<PairResult>('/v1/pair', {
       method: 'POST',
       body: { display_code: displayCode },
+    });
+  },
+
+  unpair(force = false): Promise<UnpairResult> {
+    return request<UnpairResult>('/v1/unpair', {
+      method: 'POST',
+      body: { force },
     });
   },
 

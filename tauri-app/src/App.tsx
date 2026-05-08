@@ -13,6 +13,7 @@ import { Card } from './components/Card';
 import { Spinner } from './components/Spinner';
 import { ipc } from './lib/ipc';
 import { IpcError } from './lib/types';
+import { checkForUpdate, type UpdateStatus } from './lib/updater';
 import { Dashboard } from './pages/Dashboard';
 import { Logs } from './pages/Logs';
 import { Pairing } from './pages/Pairing';
@@ -112,6 +113,7 @@ function Shell(): JSX.Element {
   return (
     <div className="flex min-h-screen flex-col">
       <Header />
+      <UpdateBanner />
       <main className="flex-1 px-6 py-5">
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -121,6 +123,69 @@ function Shell(): JSX.Element {
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>
+    </div>
+  );
+}
+
+// UpdateBanner runs `checkForUpdate()` once on mount and renders a slim
+// banner above the main content when a newer release is available. The
+// banner is dismissable per-session; clicking "Restart to update" applies
+// the update and relaunches the app.
+function UpdateBanner(): JSX.Element | null {
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  const [applying, setApplying] = useState<boolean>(false);
+  const [dismissed, setDismissed] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const status = await checkForUpdate();
+      setUpdate(status);
+    })();
+  }, []);
+
+  if (!update || update.status !== 'available' || dismissed) {
+    return null;
+  }
+
+  const onApply = async (): Promise<void> => {
+    setApplying(true);
+    setError(null);
+    try {
+      await update.apply();
+      // If apply() returns we did NOT relaunch — surface as failure.
+      setError('Update did not relaunch — try restarting manually.');
+    } catch (err) {
+      setError((err as Error).message ?? String(err));
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-zinc-200/60 bg-amber-50 px-6 py-2 text-xs text-amber-900">
+      <span>
+        Update available: v{update.currentVersion} → v{update.version}
+        {error ? <span className="ml-2 text-red-600">({error})</span> : null}
+      </span>
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => void onApply()}
+          disabled={applying}
+        >
+          {applying ? 'Applying…' : 'Restart to update'}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setDismissed(true)}
+          disabled={applying}
+        >
+          Later
+        </Button>
+      </div>
     </div>
   );
 }

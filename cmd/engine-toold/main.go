@@ -121,6 +121,22 @@ func main() {
 	}
 	defer store.Close()
 
+	// Boot-time orphan sweep — any job left in `running` from a previous
+	// (now-killed) daemon process is flipped to `failed` so the resumed
+	// scheduler doesn't try to lease-renew jobs whose executor goroutine
+	// is gone. Decision rule: failed (not requeue) — a clip-video /
+	// extract-audio resume would re-run ffmpeg + duplicate the upload, and
+	// the cloud workload reconciler retries failed workloads on a
+	// different device anyway. See internal/jobqueue/recovery.go.
+	if recovered, recErr := store.RecoverOrphaned(rootCtx, jobqueue.ReasonOrphanedAfterRestart); recErr != nil {
+		// Best-effort: log and continue. A failed sweep means the next
+		// scheduler iteration sees stale `running` rows but the lease
+		// expiry guard will retire them within a few minutes.
+		logger.Warn("orphan sweep failed", "error", recErr)
+	} else if recovered > 0 {
+		logger.Info("recovered orphaned jobs", "count", recovered, "reason", jobqueue.ReasonOrphanedAfterRestart)
+	}
+
 	tm := tools.New()
 	if t, lerr := tm.Locate(rootCtx, "ffmpeg"); lerr == nil {
 		logger.Info("ffmpeg located", "path", t.Path, "version", t.Version)

@@ -20,6 +20,14 @@ import (
 // the wrapped error message, which is unstable.
 var ErrUnauthorized = errors.New("auth: cloud rejected credentials (401)")
 
+// ErrCloudUnreachable is returned by Unpair (and any other call that wants
+// to distinguish "I asked the cloud and it errored" from "I asked the cloud
+// and got an authoritative no") when the cloud is offline / 5xx / network
+// error. The unpair handler uses this to gate the "force clear local"
+// escape hatch — we ONLY clear local state without cloud confirmation when
+// the cloud is genuinely unreachable, never on a 4xx.
+var ErrCloudUnreachable = errors.New("auth: cloud unreachable")
+
 // PairingClient performs the pairing handshake against the cloud control
 // plane. Returns a SessionBundle the daemon then hands to the keystore.
 type PairingClient struct {
@@ -104,6 +112,54 @@ func (c *PairingClient) Exchange(ctx context.Context, req ExchangeRequest) (*Exc
 		return nil, fmt.Errorf("decode exchange: %w", err)
 	}
 	return &env.Data, nil
+}
+
+// Unpair calls DELETE /v1/desktop/devices/self on the cloud, identifying
+// the daemon via its current session JWT. The cloud route lives under
+// RegisterDeviceRoutes so the device-session middleware authenticates the
+// request — no user JWT required.
+//
+// Outcomes:
+//   - 200/204 → nil (cloud successfully soft-deleted the device row + revoked sessions)
+//   - 401     → returns nil (session already expired/revoked; cloud row will be
+//               GC'd by the reconciler — no point making the user re-pair just to
+//               unpair). The caller MUST still clear local state.
+//   - 5xx / transport error → ErrCloudUnreachable
+//   - other 4xx → wrapped error (caller surfaces verbatim to UI)
+func (c *PairingClient) Unpair(ctx context.Context, sessionJWT, hwFingerprint string) error {
+	if sessionJWT == "" {
+		return errors.New("unpair: empty session jwt")
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/v1/desktop/devices/self", nil)
+	if err != nil {
+		return fmt.Errorf("new unpair request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+sessionJWT)
+	if hwFingerprint != "" {
+		httpReq.Header.Set("X-Device-Fingerprint", hwFingerprint)
+	}
+	httpReq.Header.Set("Idempotency-Key", uuid.NewString())
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrCloudUnreachable, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	switch {
+	case resp.StatusCode == http.StatusOK,
+		resp.StatusCode == http.StatusNoContent:
+		return nil
+	case resp.StatusCode == http.StatusUnauthorized:
+		// Session expired or already revoked — treat as success since the
+		// cloud row is already in a state where re-pair would succeed.
+		return nil
+	case resp.StatusCode >= 500:
+		return fmt.Errorf("%w: status %d: %s", ErrCloudUnreachable, resp.StatusCode, string(body))
+	default:
+		return fmt.Errorf("unpair: status %d: %s", resp.StatusCode, string(body))
+	}
 }
 
 // RefreshRequest is the rotate-payload.
