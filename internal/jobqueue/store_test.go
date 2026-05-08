@@ -26,7 +26,7 @@ func seedJob(t *testing.T, s *Store, id, status string) {
 		ID:              id,
 		WorkloadID:      id + "-w",
 		OrganizationID:  "org",
-		WorkloadType:    "clip-video",
+		WorkloadType:    "video:clip",
 		WorkloadVersion: 1,
 		PayloadJSON:     "{}",
 		LeaseToken:      "",

@@ -102,7 +102,7 @@ func TestGetJob_HappyPath(t *testing.T) {
 	_, store, srv := newTestServer(t)
 	if err := store.CreateJob(context.Background(), jobqueue.InsertJobInput{
 		ID: "j1", WorkloadID: "w1", OrganizationID: "org",
-		WorkloadType: "clip-video", WorkloadVersion: 1, PayloadJSON: "{}",
+		WorkloadType: "video:clip", WorkloadVersion: 1, PayloadJSON: "{}",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestCancelJob_HappyPath(t *testing.T) {
 	_, store, srv := newTestServer(t)
 	if err := store.CreateJob(context.Background(), jobqueue.InsertJobInput{
 		ID: "j2", WorkloadID: "w2", OrganizationID: "org",
-		WorkloadType: "clip-video", WorkloadVersion: 1, PayloadJSON: "{}",
+		WorkloadType: "video:clip", WorkloadVersion: 1, PayloadJSON: "{}",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestCancelJob_TerminalConflict(t *testing.T) {
 	ctx := context.Background()
 	if err := store.CreateJob(ctx, jobqueue.InsertJobInput{
 		ID: "j3", WorkloadID: "w3", OrganizationID: "org",
-		WorkloadType: "clip-video", WorkloadVersion: 1, PayloadJSON: "{}",
+		WorkloadType: "video:clip", WorkloadVersion: 1, PayloadJSON: "{}",
 	}); err != nil {
 		t.Fatal(err)
 	}

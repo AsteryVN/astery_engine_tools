@@ -16,7 +16,7 @@ import (
 type Workload struct {
 	ID             string         // UUID
 	OrganizationID string         // UUID — every executor re-checks
-	Type           string         // e.g. "clip-video"
+	Type           string         // e.g. "video:clip"
 	Version        int            // protocol version (ALWAYS check)
 	Payload        map[string]any // workload-type-specific input
 	RequiredCaps   map[string]any // e.g. {"ffmpeg": true}

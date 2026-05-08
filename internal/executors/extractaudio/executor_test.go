@@ -187,7 +187,7 @@ func TestCanRun(t *testing.T) {
 		want bool
 	}{
 		{"matches type+version", registry.Workload{Type: ID, Version: 1}, true},
-		{"wrong type", registry.Workload{Type: "clip-video", Version: 1}, false},
+		{"wrong type", registry.Workload{Type: "video:clip", Version: 1}, false},
 		{"future version", registry.Workload{Type: ID, Version: 99}, false},
 	}
 	for _, c := range cases {

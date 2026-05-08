@@ -28,16 +28,23 @@ import (
 	"github.com/AsteryVN/astery_engine_tools/internal/tools"
 )
 
-// ID is the workload type this executor handles.
-const ID = "clip-video"
+// ID is the workload type this executor handles. MUST match the cloud's
+// workload_type string (cmd/api/main.go's videoClipWorkloadAdapter sets
+// WorkloadType="video:clip"); the registry keys executors by ID and the
+// scheduler does Lookup(workload.Type).
+const ID = "video:clip"
 
 // SupportedVersion is the highest workload_version this executor speaks.
 // Bumped in lock-step with cloud-side payload changes.
 const SupportedVersion = 1
 
-// Executor implements registry.Executor.
+// Executor implements registry.Executor. The encoder field is populated
+// lazily on first Execute via SelectEncoder so daemons that never receive
+// clip-video work don't pay the probe cost at startup.
 type Executor struct {
-	tools *tools.Manager
+	tools   *tools.Manager
+	encOnce sync.Once
+	encoder Encoder
 }
 
 // New constructs an Executor.
@@ -122,6 +129,20 @@ func (e *Executor) Execute(ctx context.Context, h registry.JobHandle) error {
 	}
 	_ = h.AppendEvent(ctx, "log", "ffmpeg located", map[string]any{"path": ff.Path, "version": ff.Version})
 
+	// Probe encoder once per Executor lifetime. Failures fall back to libx264.
+	e.encOnce.Do(func() {
+		enc, err := SelectEncoder(ctx, ff.Path)
+		if err != nil {
+			_ = h.AppendEvent(ctx, "log", "encoder probe failed, using libx264",
+				map[string]any{"error": err.Error()})
+			e.encoder = FallbackEncoder
+			return
+		}
+		e.encoder = enc
+		_ = h.AppendEvent(ctx, "log", "encoder selected",
+			map[string]any{"codec": enc.Codec, "hw": enc.HW})
+	})
+
 	// Download master once.
 	masterPath := filepath.Join(h.WorkDir(), "master.mp4")
 	if _, err := os.Stat(masterPath); os.IsNotExist(err) {
@@ -140,7 +161,7 @@ func (e *Executor) Execute(ctx context.Context, h registry.JobHandle) error {
 			continue
 		}
 		clipPath := filepath.Join(h.WorkDir(), fmt.Sprintf("clip-%d.mp4", spec.Index))
-		args := buildFFmpegArgs(masterPath, clipPath, spec, aspect)
+		args := buildFFmpegArgs(masterPath, clipPath, spec, aspect, e.encoder)
 		cmd := exec.CommandContext(ctx, ff.Path, args...)
 		out, runErr := cmd.CombinedOutput()
 		if runErr != nil {
@@ -218,34 +239,6 @@ func downloadFile(ctx context.Context, url, dst string) error {
 	return nil
 }
 
-// buildFFmpegArgs returns the FFmpeg argv. 16:9 = stream-copy (fast); 9:16 =
-// libx264 transcode with crop+scale (matches the cloud's pkg/video/clipper.go).
-func buildFFmpegArgs(master, dst string, spec ClipSpec, aspect string) []string {
-	if aspect == "9:16" {
-		return []string{
-			"-y",
-			"-ss", fmt.Sprintf("%.3f", spec.StartSeconds),
-			"-to", fmt.Sprintf("%.3f", spec.EndSeconds),
-			"-i", master,
-			"-vf", "crop=ih*9/16:ih,scale=1080:1920",
-			"-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-			"-c:a", "aac", "-b:a", "128k",
-			"-movflags", "+faststart",
-			dst,
-		}
-	}
-	// 16:9 — stream copy (no transcode).
-	return []string{
-		"-y",
-		"-ss", fmt.Sprintf("%.3f", spec.StartSeconds),
-		"-to", fmt.Sprintf("%.3f", spec.EndSeconds),
-		"-i", master,
-		"-c", "copy",
-		"-movflags", "+faststart",
-		dst,
-	}
-}
-
 func tail(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -261,6 +254,3 @@ func decodePayload(payload map[string]any, target *payload) error {
 	return json.Unmarshal(raw, target)
 }
 
-// _ keeps sync imported (not required at compile but useful when adding
-// future helpers that share state).
-var _ = sync.Mutex{}

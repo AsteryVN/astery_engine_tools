@@ -6,7 +6,7 @@ GOFLAGS    ?= -trimpath
 LDFLAGS    ?= -s -w
 BIN_DIR    ?= bin
 DAEMON     ?= engine-toold
-VERSION    ?= 0.1.0-dev
+VERSION    ?= 0.2.5
 
 .PHONY: build test run clean lint tauri-dev tauri-build tauri-bundle tauri-test
 
