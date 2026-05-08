@@ -48,6 +48,9 @@ export type IpcErrorKind =
   | 'auth-rejected'
   | 'not-found'
   | 'conflict'
+  | 'cloud-unreachable' // 502 cloud_unreachable from /v1/unpair
+  | 'cloud-rejected'    // 502 cloud_rejected from /v1/unpair
+  | 'not-paired'        // 409 not_paired from /v1/unpair
   | 'unknown';
 
 export class IpcError extends Error {

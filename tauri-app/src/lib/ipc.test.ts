@@ -156,6 +156,78 @@ describe('ipc.request', () => {
       kind: 'conflict',
     });
   });
+
+  it('classifies 409 with body.error="not_paired" as not-paired', async () => {
+    // Distinct from a generic 409 — the unpair handler returns 409 when no
+    // local session exists, and the renderer's Pairing state machine needs
+    // to branch on this without parsing strings.
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        fakeResponse({ status: 409, body: { error: 'not_paired' } }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(ipc.unpair()).rejects.toMatchObject({ kind: 'not-paired' });
+  });
+
+  it('classifies 502 with body.error="cloud_unreachable" as cloud-unreachable', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        fakeResponse({ status: 502, body: { error: 'cloud_unreachable' } }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(ipc.unpair()).rejects.toMatchObject({
+      kind: 'cloud-unreachable',
+    });
+  });
+
+  it('classifies 502 with body.error="cloud_rejected" as cloud-rejected', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        fakeResponse({ status: 502, body: { error: 'cloud_rejected' } }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(ipc.unpair()).rejects.toMatchObject({
+      kind: 'cloud-rejected',
+    });
+  });
+
+  it('unpair happy-path returns the cleared_jobs + forced fields', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      fakeResponse({
+        status: 200,
+        body: { cleared_jobs: 3, forced: false },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await ipc.unpair();
+    expect(result.cleared_jobs).toBe(3);
+    expect(result.forced).toBe(false);
+
+    // body must include the force flag — defaults to false when omitted.
+    const calls = fetchMock.mock.calls;
+    const firstCall = calls[0]!;
+    const init = firstCall[1] as RequestInit;
+    expect(init.body).toBe(JSON.stringify({ force: false }));
+  });
+
+  it('unpair propagates the force=true flag in the request body', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      fakeResponse({
+        status: 200,
+        body: { cleared_jobs: 0, forced: true },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await ipc.unpair(true);
+    expect(result.forced).toBe(true);
+    const calls = fetchMock.mock.calls;
+    const firstCall = calls[0]!;
+    const init = firstCall[1] as RequestInit;
+    expect(init.body).toBe(JSON.stringify({ force: true }));
+  });
 });
 
 // ─── SSE stream tests ────────────────────────────────────────────────────

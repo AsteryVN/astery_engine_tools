@@ -7,6 +7,11 @@ mod daemon;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        // Auto-updater plugin — checks the signed `latest.json` endpoint
+        // configured in tauri.conf.json on app launch. The renderer drives
+        // the user-facing flow via @tauri-apps/plugin-updater (see App.tsx).
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Best-effort sidecar spawn. If the daemon is already running
             // (port file present + responsive on /v1/status) we attach
