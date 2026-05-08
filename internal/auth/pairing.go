@@ -187,6 +187,11 @@ func (c *PairingClient) Refresh(ctx context.Context, req RefreshRequest) (*Excha
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusUnauthorized {
+		// Cloud rejected the refresh token (rotated/revoked/expired). The
+		// caller must trigger a re-pair — refresh cannot recover.
+		return nil, fmt.Errorf("refresh: %w (body: %s)", ErrUnauthorized, string(body))
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("refresh: status %d: %s", resp.StatusCode, string(body))
 	}

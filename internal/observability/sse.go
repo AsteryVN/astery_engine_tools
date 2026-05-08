@@ -205,10 +205,10 @@ func (f *fanoutHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	kv := make(map[string]any, len(f.attrs)+r.NumAttrs())
 	for _, a := range f.attrs {
-		kv[a.Key] = a.Value.Any()
+		kv[a.Key] = attrValueForJSON(a.Value)
 	}
 	r.Attrs(func(a slog.Attr) bool {
-		kv[a.Key] = a.Value.Any()
+		kv[a.Key] = attrValueForJSON(a.Value)
 		return true
 	})
 	if len(kv) == 0 {
@@ -251,6 +251,19 @@ func (f *fanoutHandler) WithGroup(name string) slog.Handler {
 		attrs: f.attrs,
 		group: name,
 	}
+}
+
+// attrValueForJSON unwraps a slog.Value for JSON publishing. Errors arrive as
+// KindAny holding a wrapped error (no exported fields) which json.Marshal
+// would render as `{}`; we coerce to the .Error() string instead so SSE
+// consumers see the message.
+func attrValueForJSON(v slog.Value) any {
+	if v.Kind() == slog.KindAny {
+		if err, ok := v.Any().(error); ok {
+			return err.Error()
+		}
+	}
+	return v.Any()
 }
 
 // levelString maps slog levels to the strings the SSE schema expects.

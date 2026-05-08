@@ -165,6 +165,7 @@ func main() {
 		Upload:    uploader,
 		Store:     store,
 		BaseTmp:   layout.Tmp,
+		Auth:      tokenSrc,
 	})
 
 	ipcToken, err := rt.LoadOrCreateIPCToken(layout)

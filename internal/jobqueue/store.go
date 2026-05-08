@@ -177,6 +177,32 @@ func (s *Store) GetJob(ctx context.Context, id string) (*Job, error) {
 	return &j, nil
 }
 
+// GetByWorkloadID returns the local job row for a cloud workload, if any.
+// Returns ErrNotFound when no row exists. The local schema enforces UNIQUE on
+// workload_id, so at most one row matches.
+func (s *Store) GetByWorkloadID(ctx context.Context, workloadID string) (*Job, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, workload_id, organization_id, workload_type, workload_version,
+		       payload_json, status, lease_token, lease_expires_at, resumable_state,
+		       created_at, updated_at
+		  FROM jobs WHERE workload_id = ?`, workloadID)
+	var j Job
+	var created, updated string
+	if err := row.Scan(
+		&j.ID, &j.WorkloadID, &j.OrganizationID, &j.WorkloadType, &j.WorkloadVersion,
+		&j.PayloadJSON, &j.Status, &j.LeaseToken, &j.LeaseExpiresAt, &j.ResumableState,
+		&created, &updated,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get by workload id: %w", err)
+	}
+	j.CreatedAt = parseSQLiteTime(created)
+	j.UpdatedAt = parseSQLiteTime(updated)
+	return &j, nil
+}
+
 // ListJobs returns the most recent jobs (paginated by limit/offset).
 func (s *Store) ListJobs(ctx context.Context, status string, limit, offset int) ([]Job, error) {
 	if limit <= 0 {
