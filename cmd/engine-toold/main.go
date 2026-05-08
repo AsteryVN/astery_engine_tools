@@ -30,6 +30,7 @@ import (
 
 	"github.com/AsteryVN/astery_engine_tools/internal/auth"
 	"github.com/AsteryVN/astery_engine_tools/internal/executors/clipvideo"
+	"github.com/AsteryVN/astery_engine_tools/internal/executors/extractaudio"
 	"github.com/AsteryVN/astery_engine_tools/internal/ipc"
 	"github.com/AsteryVN/astery_engine_tools/internal/jobqueue"
 	"github.com/AsteryVN/astery_engine_tools/internal/observability"
@@ -52,7 +53,12 @@ func main() {
 		pairCode    = flag.String("pair", "", "exchange a pairing display code, store the session, then exit")
 		dataDir     = flag.String("data-dir", "", "override the data directory")
 		listen      = flag.String("listen", "127.0.0.1:0", "IPC listen address")
-		cloudURL    = flag.String("cloud-url", envOr("ENGINE_CLOUD_URL", "http://localhost:8080/api"), "cloud control plane base URL")
+		// Default points at production cloud — released AppImages must work
+		// out of the box for end users. Local development overrides via
+		// ENGINE_CLOUD_URL env var or --cloud-url flag (the Tauri shell
+		// passes the local override automatically in debug builds; see
+		// tauri-app/src-tauri/src/daemon.rs).
+		cloudURL = flag.String("cloud-url", envOr("ENGINE_CLOUD_URL", "https://engine.asteryvn.com/api"), "cloud control plane base URL")
 		displayName = flag.String("display-name", envOr("ENGINE_DISPLAY_NAME", defaultDisplayName()), "device display name")
 	)
 	flag.Parse()
@@ -124,6 +130,7 @@ func main() {
 
 	reg := registry.New()
 	reg.Register(clipvideo.New(tm))
+	reg.Register(extractaudio.New(tm))
 
 	resMgr := resources.New(resources.Limits{}, layout.Root)
 
