@@ -24,10 +24,20 @@ type Limits struct {
 }
 
 // Defaults — small enough for a personal machine without freezing the UI.
+//
+// MaxRAMPercent was raised from 70 to 95 in v0.2.4 because real personal
+// machines routinely sit at 75-85% RAM in the steady state (browsers,
+// editors, dev servers). At 70% the scheduler.Reserve gate silently
+// rejected every tick on those machines — no claim call ever fired,
+// no last_seen_at heartbeat reached the cloud, and the device drifted
+// offline ~5 minutes after pairing. The Reserve gate was always intended
+// to keep workload *execution* off a saturated machine, not to gate the
+// poll/heartbeat path; raising the threshold is the smallest fix until
+// the heartbeat path is decoupled from Reserve entirely.
 const (
 	DefaultMaxConcurrentJobs = 2
 	DefaultMaxCPUPercent     = 70.0
-	DefaultMaxRAMPercent     = 70.0
+	DefaultMaxRAMPercent     = 95.0
 	DefaultMinDiskFreeGB     = 5.0
 )
 
